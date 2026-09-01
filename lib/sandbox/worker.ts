@@ -34,7 +34,13 @@ export class RepairWorkspace {
     })
     await this.sandbox.connect()
     await this.progress("Sandbox created", `Solari sandbox ${this.sandbox.sandboxId}`)
-    await this.sandbox.git.clone(repositoryUrl, { path: REPOSITORY_PATH, depth: 1 })
+    const githubToken = process.env.GITHUB_TOKEN
+    await this.sandbox.git.clone(repositoryUrl, {
+      path: REPOSITORY_PATH,
+      branch: "main",
+      depth: 1,
+      ...(githubToken ? { username: "x-access-token", password: githubToken } : {}),
+    })
     await this.sandbox.git.checkout(`wiwo/fix-${finding.id.slice(0, 8)}`, { cwd: REPOSITORY_PATH, create: true })
     await this.progress("Repository cloned", repositoryUrl.replace(/\.git$/, ""))
 
