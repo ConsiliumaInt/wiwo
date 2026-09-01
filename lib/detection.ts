@@ -3,7 +3,10 @@ import type { Finding, Severity } from "@/lib/types"
 
 export function createFinding(result: BrowserRunResult, objective: string): Finding | null {
   if (!result.signals.length) return null
-  const primary = [...result.signals].sort((a, b) => severityRank(b.severity) - severityRank(a.severity))[0]
+  // Prefer failures emitted by the application over the agent's own inability
+  // to locate an element. A selector timeout can explain a bad test step, but
+  // repeated HTTP/console/exception signals are the evidence we can repair.
+  const primary = [...result.signals].sort((a, b) => signalRank(b) - signalRank(a))[0]
   return {
     id: crypto.randomUUID(),
     title: titleFor(primary),
@@ -54,6 +57,11 @@ function titleFor(signal: FailureSignal): string {
 
 function severityRank(severity: Severity): number {
   return { low: 1, medium: 2, high: 3, critical: 4 }[severity]
+}
+
+function signalRank(signal: FailureSignal): number {
+  const kindRank = { http: 5, exception: 5, console: 4, page: 4, interaction: 1 }[signal.kind]
+  return kindRank * 10 + severityRank(signal.severity)
 }
 
 function tokens(value: string): string[] {
