@@ -76,7 +76,7 @@ class DeepSeekProvider implements LLMProvider {
           { role: "user", content: prompt },
         ],
         response_format: { type: "json_object" },
-        max_tokens: 12_000,
+        max_tokens: 3_000,
         temperature: 0,
       }),
       signal: AbortSignal.timeout(90_000),

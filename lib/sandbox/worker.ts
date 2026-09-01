@@ -266,19 +266,30 @@ export class RepairWorkspace {
   }
 
   private async collectSourceContext(files: string[], finding: Finding): Promise<string> {
-    const relevantTokens = `${finding.title} ${finding.description} ${finding.affectedUrl}`.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []
+    const requestKeys = extractJsonKeys(finding.reproductionRequest?.body)
+    const relevantTokens = `${finding.title} ${finding.description} ${finding.affectedUrl} ${requestKeys.join(" ")}`.toLowerCase().match(/[a-z0-9_]{4,}/g) ?? []
+    let matchedFiles: string[] = []
+    if (requestKeys.length) {
+      const pattern = requestKeys.map(escapeRegex).join("|")
+      const matches = await this.requireSandbox().commands.run("git", {
+        args: ["grep", "-l", "-E", pattern, "--", "*.ts", "*.tsx", "*.js", "*.jsx"],
+        cwd: REPOSITORY_PATH,
+        timeoutMs: 15_000,
+      })
+      if (matches.exitCode === 0) matchedFiles = matches.stdout.split("\n").filter(Boolean)
+    }
     const candidates = files
       .filter((file) => /(?:^|\/)(?:src|app|pages|lib|components|test|tests)\//.test(file) || /(?:package\.json|README\.md)$/.test(file))
       .filter((file) => !/(?:lock|\.snap$|\.min\.)/.test(file))
       .filter((file) => /\.(?:ts|tsx|js|jsx|json|md)$/.test(file))
-      .map((file) => ({ file, score: relevantTokens.filter((token) => file.toLowerCase().includes(token)).length }))
+      .map((file) => ({ file, score: (matchedFiles.includes(file) ? 100 : 0) + relevantTokens.filter((token) => file.toLowerCase().includes(token)).length }))
       .sort((a, b) => b.score - a.score)
       .map(({ file }) => file)
-      .slice(0, 24)
+      .slice(0, 12)
     const chunks: string[] = []
     let total = 0
     for (const file of candidates) {
-      if (total >= 55_000) break
+      if (total >= 28_000) break
       try {
         const content = await this.requireSandbox().files.readText(`${REPOSITORY_PATH}/${file}`)
         const chunk = `\n--- ${file} ---\n${content.slice(0, 12_000)}`
@@ -295,6 +306,20 @@ export class RepairWorkspace {
     if (!this.sandbox) throw new Error("Sandbox has not been created")
     return this.sandbox
   }
+}
+
+function extractJsonKeys(body?: string): string[] {
+  if (!body) return []
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>
+    return Object.keys(parsed).filter((key) => /^[A-Za-z_][A-Za-z0-9_]{2,40}$/.test(key)).slice(0, 12)
+  } catch {
+    return []
+  }
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 function detectPackageManager(files: string[]): string {
