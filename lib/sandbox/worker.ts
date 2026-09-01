@@ -93,7 +93,9 @@ export class RepairWorkspace {
   }
 
   async generateAndApplyPatch(llm: LLMProvider, finding: Finding, rootCause: RootCause, sourceContext: string): Promise<string> {
-    const response = await llm.generate<{ diff: string }>({
+    let response: { diff: string }
+    try {
+      response = await llm.generate<{ diff: string }>({
       name: "candidate_patch",
       system: [
         "Generate one minimal unified git diff for the diagnosed defect.",
@@ -110,7 +112,12 @@ export class RepairWorkspace {
         required: ["diff"],
         additionalProperties: false,
       },
-    })
+      })
+    } catch (error) {
+      const fallback = await this.applyContractKeyFallback(finding, rootCause)
+      if (fallback) return fallback
+      throw error
+    }
     const diff = sanitiseDiff(response.diff)
     if (!diff.startsWith("diff --git ") || diff.length > 100_000) throw new Error("AI provider did not produce a safe unified git diff")
     validatePatchTargets(diff)
@@ -122,6 +129,39 @@ export class RepairWorkspace {
     if (apply.exitCode !== 0) throw new Error(`Candidate patch failed: ${redactSecrets(apply.stderr)}`)
     await this.progress("Candidate fix applied", `${diff.split("\n").filter((line) => line.startsWith("+++ b/")).length} file(s) changed`)
     return redactSecrets(diff, 100_000)
+  }
+
+  private async applyContractKeyFallback(finding: Finding, rootCause: RootCause): Promise<string | null> {
+    const requestKeys = extractJsonKeys(finding.reproductionRequest?.body)
+    const diagnosedIdentifiers = `${rootCause.probableCause} ${rootCause.rationale} ${rootCause.patchStrategy}`
+      .match(/`([A-Za-z_$][A-Za-z0-9_$]*)`/g)
+      ?.map((value) => value.slice(1, -1)) ?? []
+    const desiredKeys = diagnosedIdentifiers.filter((key) => !requestKeys.includes(key))
+    const sandbox = this.requireSandbox()
+    for (const file of rootCause.likelyFiles) {
+      if (!/^(?:src|app|pages|lib|components)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|js|jsx)$/.test(file)) continue
+      let content: string
+      try {
+        content = await sandbox.files.readText(`${REPOSITORY_PATH}/${file}`)
+      } catch {
+        continue
+      }
+      for (const oldKey of requestKeys) {
+        for (const desiredKey of desiredKeys) {
+          const pattern = new RegExp(`\\b${escapeRegex(oldKey)}\\s*:\\s*${escapeRegex(desiredKey)}\\b`)
+          if (!pattern.test(content)) continue
+          const updated = content.replace(pattern, desiredKey)
+          await sandbox.files.write(`${REPOSITORY_PATH}/${file}`, updated)
+          const diffResult = await sandbox.commands.run("git", { args: ["diff", "--", file], cwd: REPOSITORY_PATH, timeoutMs: 15_000 })
+          const diff = sanitiseDiff(diffResult.stdout)
+          if (diffResult.exitCode !== 0 || !diff.startsWith("diff --git ")) return null
+          validatePatchTargets(diff)
+          await this.progress("Candidate fix applied", `Contract key ${oldKey} corrected to ${desiredKey} in ${file}`)
+          return redactSecrets(diff, 100_000)
+        }
+      }
+    }
+    return null
   }
 
   async validate(analysis: RepositoryAnalysis): Promise<ValidationResult[]> {
