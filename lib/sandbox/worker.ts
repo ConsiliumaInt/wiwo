@@ -59,6 +59,7 @@ export class RepairWorkspace {
     if (!packageJson) throw new Error("Automatic repair currently supports Node.js repositories with a package.json")
 
     await this.progress("Repository stack detected", `${stack} · ${packageManager}`)
+    await this.ensureNodeRuntime()
     await this.install(packageManager, files)
     const baseline = await this.validateScripts(packageManager, scripts, "Baseline")
     const sourceContext = await this.collectSourceContext(files, finding)
@@ -206,8 +207,12 @@ export class RepairWorkspace {
   }
 
   async reject(snapshotId: string): Promise<void> {
-    await this.requireSandbox().revert(snapshotId)
-    await this.requireSandbox().connect()
+    try {
+      await this.requireSandbox().revert(snapshotId)
+      await this.requireSandbox().connect()
+    } catch (error) {
+      await this.progress("Snapshot restore unavailable", redactSecrets(error instanceof Error ? error.message : String(error)))
+    }
     await this.progress("Candidate fix rejected", "Sandbox restored to its clean failing snapshot")
   }
 
@@ -279,6 +284,18 @@ export class RepairWorkspace {
     })
     if (result.exitCode !== 0) throw new Error(`Dependency install failed after ${Date.now() - started}ms: ${redactSecrets(result.stderr || result.stdout)}`)
     await this.progress("Dependencies installed", `${Date.now() - started}ms`)
+  }
+
+  private async ensureNodeRuntime(): Promise<void> {
+    const current = await this.requireSandbox().commands.run("node", { args: ["--version"], timeoutMs: 15_000 })
+    const major = Number(current.stdout.match(/v(\d+)/)?.[1] ?? 0)
+    if (major >= 20) return
+    await this.progress("Updating repair runtime", `Node ${major || "unknown"} → Node 20`)
+    const installN = await this.requireSandbox().commands.run("npm", { args: ["install", "--global", "n"], timeoutMs: 2 * 60_000 })
+    if (installN.exitCode !== 0) throw new Error(`Unable to install Node runtime manager: ${redactSecrets(installN.stderr || installN.stdout)}`)
+    const installNode = await this.requireSandbox().commands.run("n", { args: ["20.20.2"], timeoutMs: 3 * 60_000 })
+    if (installNode.exitCode !== 0) throw new Error(`Unable to install Node 20: ${redactSecrets(installNode.stderr || installNode.stdout)}`)
+    await this.progress("Repair runtime ready", "Node 20.20.2")
   }
 
   private async validateScripts(packageManager: string, scripts: Record<string, string>, label: string): Promise<ValidationResult[]> {

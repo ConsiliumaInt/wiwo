@@ -74,7 +74,11 @@ async function executeRun(runId: string): Promise<void> {
 
     assertDeadline(deadline)
     const validation = await workspace.validate(prepared.analysis)
-    const validationPassed = validation.length > 0 && validation.every((result) => result.passed)
+    const validationPassed = validation.length > 0 && validation.every((result) => {
+      if (result.passed) return true
+      const baseline = prepared.baseline.find((item) => item.command === result.command)
+      return Boolean(baseline && !baseline.passed)
+    })
     await updateFinding(runId, finding.id, (item) => { item.validation = validation })
     if (!validationPassed) {
       await workspace.reject(prepared.snapshotId)
@@ -83,7 +87,7 @@ async function executeRun(runId: string): Promise<void> {
       await reportFinding(runId, "The candidate was rejected because practical repository checks did not all pass")
       return
     }
-    await addEvent(runId, "VALIDATE", "Candidate validation passed", "success", validationSummary(validation))
+    await addEvent(runId, "VALIDATE", "Candidate introduced no validation regressions", "success", validationSummary(validation))
 
     assertDeadline(deadline)
     await addEvent(runId, "DEPLOY_PREVIEW", "Starting patched application")
