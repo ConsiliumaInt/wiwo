@@ -7,6 +7,11 @@ interface ResponsesPayload {
   status?: string
 }
 
+interface ChatCompletionsPayload {
+  choices?: Array<{ message?: { content?: string } }>
+  error?: { message?: string }
+}
+
 export class OpenAIProvider implements LLMProvider {
   constructor(
     private readonly apiKey: string,
@@ -53,6 +58,39 @@ export class OpenAIProvider implements LLMProvider {
   }
 }
 
+class DeepSeekProvider implements LLMProvider {
+  constructor(
+    private readonly apiKey: string,
+    private readonly model: string,
+    private readonly endpoint: string,
+  ) {}
+
+  async generate<T>({ name, system, prompt, schema }: GenerateRequest): Promise<T> {
+    const response = await fetch(this.endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: this.model,
+        messages: [
+          { role: "system", content: `${system}\nReturn only one JSON object named ${name} that satisfies this JSON Schema:\n${JSON.stringify(schema)}` },
+          { role: "user", content: prompt },
+        ],
+        response_format: { type: "json_object" },
+        max_tokens: 12_000,
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(90_000),
+    })
+    const payload = await response.json() as ChatCompletionsPayload
+    if (!response.ok) throw new Error(`AI provider failed (${response.status}): ${payload.error?.message ?? "unknown error"}`)
+    const text = payload.choices?.[0]?.message?.content
+    if (!text) throw new Error("AI provider returned no structured output")
+    const parsed = JSON.parse(text) as T
+    if (JSON.stringify(parsed) === JSON.stringify(schema)) throw new Error("AI provider returned the schema instead of an answer")
+    return parsed
+  }
+}
+
 export function getLLMProvider(): LLMProvider {
   const provider = (process.env.LLM_PROVIDER || "openai").toLowerCase()
   if (provider === "deepseek") {
@@ -60,12 +98,12 @@ export function getLLMProvider(): LLMProvider {
     if (!apiKey) {
       throw new LLMUnavailableError("DEEPSEEK_API_KEY is required when LLM_PROVIDER=deepseek")
     }
-    return new OpenAIProvider(
+    return new DeepSeekProvider(
       apiKey,
       process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
       process.env.DEEPSEEK_BASE_URL
-        ? `${process.env.DEEPSEEK_BASE_URL.replace(/\/$/, "")}/responses`
-        : "https://api.deepseek.com/responses",
+        ? `${process.env.DEEPSEEK_BASE_URL.replace(/\/$/, "")}/chat/completions`
+        : "https://api.deepseek.com/chat/completions",
     )
   }
 
