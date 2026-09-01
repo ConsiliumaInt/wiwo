@@ -1,0 +1,18 @@
+services:
+  wiwo:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_BASE_PATH: /wiwo
+    env_file: .env.local
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3020:3000"
+    volumes:
+      - wiwo-data:/app/data
+
+volumes:
+  wiwo-data:
