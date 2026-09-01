@@ -76,10 +76,10 @@ class DeepSeekProvider implements LLMProvider {
           { role: "user", content: prompt },
         ],
         response_format: { type: "json_object" },
-        max_tokens: 3_000,
+        max_tokens: 8_000,
         temperature: 0,
       }),
-      signal: AbortSignal.timeout(90_000),
+      signal: AbortSignal.timeout(180_000),
     })
     const payload = await response.json() as ChatCompletionsPayload
     if (!response.ok) throw new Error(`AI provider failed (${response.status}): ${payload.error?.message ?? "unknown error"}`)
