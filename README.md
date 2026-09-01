@@ -99,6 +99,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `SOLARI_API_KEY` | Yes | Creates real browser and sandbox sessions |
+| `GITHUB_TOKEN` | No | Opens a pull request for a verified repair; never writes directly to the default branch |
 | `LLM_PROVIDER` | No | `openai` (default) or `deepseek` |
 | `OPENAI_API_KEY` | Yes for OpenAI | Natural-language browser decisions, diagnosis, and patch generation |
 | `OPENAI_MODEL` | No | OpenAI structured-output model; defaults to `gpt-5-mini` |

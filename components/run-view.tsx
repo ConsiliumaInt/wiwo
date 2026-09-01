@@ -67,6 +67,7 @@ export function RunView({ initialRun }: { initialRun: QARun }) {
           <KeyValue label="Sandbox" value={run.repositoryAnalysis?.sandboxId ?? "Not created"} />
           <KeyValue label="Stack" value={run.repositoryAnalysis?.stack ?? "Pending repair mode"} />
           <KeyValue label="Preview" value={run.previewUrl ?? "Unavailable"} link={Boolean(run.previewUrl)} />
+          <KeyValue label="Pull request" value={run.pullRequestUrl ?? "Only opened after verified fix"} link={Boolean(run.pullRequestUrl)} />
           {run.error && <div className="runError"><b>Run stopped</b><p>{run.error}</p></div>}
         </aside>
       </div>

@@ -35,6 +35,7 @@ export class RepairWorkspace {
     await this.sandbox.connect()
     await this.progress("Sandbox created", `Solari sandbox ${this.sandbox.sandboxId}`)
     await this.sandbox.git.clone(repositoryUrl, { path: REPOSITORY_PATH, depth: 1 })
+    await this.sandbox.git.checkout(`wiwo/fix-${finding.id.slice(0, 8)}`, { cwd: REPOSITORY_PATH, create: true })
     await this.progress("Repository cloned", repositoryUrl.replace(/\.git$/, ""))
 
     const files = await this.listFiles()
@@ -119,6 +120,42 @@ export class RepairWorkspace {
 
   async validate(analysis: RepositoryAnalysis): Promise<ValidationResult[]> {
     return this.validateScripts(analysis.packageManager ?? "npm", analysis.scripts, "Candidate")
+  }
+
+  async publishPullRequest(repositoryUrl: string, finding: Finding, runId: string): Promise<string | null> {
+    const token = process.env.GITHUB_TOKEN
+    if (!token) return null
+    const match = repositoryUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/)
+    if (!match) throw new Error("Pull request publishing requires a canonical GitHub repository URL")
+    const [, owner, repository] = match
+    const branch = `wiwo/fix-${finding.id.slice(0, 8)}`
+    const sandbox = this.requireSandbox()
+    await sandbox.git.add(["."], REPOSITORY_PATH)
+    const commit = await sandbox.git.commit(`WIWO: fix ${finding.title}`, {
+      cwd: REPOSITORY_PATH,
+      author: "WIWO <wiwo@consiliuma.co.uk>",
+      email: "wiwo@consiliuma.co.uk",
+    })
+    await sandbox.git.push({ cwd: REPOSITORY_PATH, branch, username: "x-access-token", password: token })
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repository}/pulls`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({
+        title: `WIWO: ${finding.title}`,
+        head: branch,
+        base: "main",
+        body: `## WIWO verified repair\n\nRun: ${runId}\n\n${finding.description}\n\nThe candidate patch passed the repository validation gates and the reproduced browser workflow was verified against the Solari preview. Please review before merging.\n\nCommit: ${commit.hash}`,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    const payload = await response.json() as { html_url?: string; message?: string }
+    if (!response.ok || !payload.html_url) throw new Error(`GitHub pull request failed (${response.status}): ${payload.message ?? "unknown error"}`)
+    return payload.html_url
   }
 
   async reject(snapshotId: string): Promise<void> {

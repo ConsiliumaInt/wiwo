@@ -98,6 +98,16 @@ async function executeRun(runId: string): Promise<void> {
       item.verification = after
       item.status = after.expectedOutcomeObserved ? "VERIFIED_FIXED" : "UNABLE_TO_VERIFY"
     })
+    if (after.expectedOutcomeObserved && run.input.repositoryUrl) {
+      await addEvent(runId, "REPORT", "Publishing verified repair as a pull request")
+      const pullRequestUrl = await workspace.publishPullRequest(run.input.repositoryUrl, finding, runId)
+      if (pullRequestUrl) {
+        await updateRun(runId, (current) => { current.pullRequestUrl = pullRequestUrl })
+        await addEvent(runId, "REPORT", "Pull request opened", "success", pullRequestUrl)
+      } else {
+        await addEvent(runId, "REPORT", "Pull request not opened", "warning", "GITHUB_TOKEN is not configured")
+      }
+    }
     await reportFinding(runId, after.expectedOutcomeObserved ? "The reproduced failure is absent from the patched workflow" : "The patched workflow did not meet every verification gate")
   } catch (error) {
     const message = redactSecrets(error instanceof Error ? error.message : String(error))

@@ -136,5 +136,6 @@ export interface QARun {
   recordingUrl?: string
   repositoryAnalysis?: RepositoryAnalysis
   previewUrl?: string
+  pullRequestUrl?: string
   error?: string
 }
