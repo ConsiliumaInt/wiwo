@@ -4,7 +4,7 @@ import { createFinding, sameFailure } from "@/lib/detection"
 import { getLLMProvider } from "@/lib/llm/openai"
 import { RepairWorkspace } from "@/lib/sandbox/worker"
 import { addEvent, getRun, updateRun } from "@/lib/store"
-import type { Finding, QARun, Stage, VerificationResult } from "@/lib/types"
+import type { BrowserAction, Finding, QARun, Stage, VerificationResult } from "@/lib/types"
 import { redactSecrets } from "@/lib/security"
 
 const activeRuns = new Set<string>()
@@ -153,7 +153,7 @@ async function detect(runId: string, objective: string, exploration: BrowserRunR
 async function reproduce(runId: string, url: string, finding: Finding, exploration: BrowserRunResult): Promise<boolean> {
   await updateFinding(runId, finding.id, (item) => { item.status = "REPRODUCING" })
   await addEvent(runId, "REPRODUCE", "Replaying the exact observed workflow")
-  const replay = await replayWorkflow(runId, url, exploration.steps.map((item) => item.action), "reproduction", (message, detail) => addEvent(runId, "REPRODUCE", message, "info", detail).then(() => undefined))
+  const replay = await replayWorkflow(runId, url, replayActions(exploration.steps), "reproduction", (message, detail) => addEvent(runId, "REPRODUCE", message, "info", detail).then(() => undefined))
   const reproduced = sameFailure(finding, replay)
   await updateFinding(runId, finding.id, (item) => {
     item.status = reproduced ? "REPRODUCED" : "UNABLE_TO_REPRODUCE"
@@ -165,7 +165,7 @@ async function reproduce(runId: string, url: string, finding: Finding, explorati
 
 async function verify(runId: string, previewUrl: string, finding: Finding, exploration: BrowserRunResult, validationPassed: boolean): Promise<VerificationResult> {
   await addEvent(runId, "VERIFY", "Running before/after verification against preview")
-  const after = await replayWorkflow(runId, previewUrl, exploration.steps.map((item) => item.action), "after", (message, detail) => addEvent(runId, "VERIFY", message, "info", detail).then(() => undefined))
+  const after = await replayWorkflow(runId, previewUrl, replayActions(exploration.steps), "after", (message, detail) => addEvent(runId, "VERIFY", message, "info", detail).then(() => undefined))
   const originalAbsent = !sameFailure(finding, after)
   const workflowRerun = after.steps.filter((step) => step.action.type !== "finish").length === exploration.steps.filter((step) => step.action.type !== "finish").length
   const noFailureSignals = after.signals.length === 0
@@ -235,6 +235,15 @@ function boundedTimeout(value?: string): number {
 
 function validationSummary(results: { command: string; passed: boolean }[]): string {
   return results.length ? results.map((result) => `${result.passed ? "PASS" : "FAIL"} ${result.command}`).join(" · ") : "No practical validation scripts discovered"
+}
+
+function replayActions(steps: BrowserRunResult["steps"]): BrowserAction[] {
+  return steps.map((step) => {
+    if (step.selectorUsed && step.action.type !== "goto" && step.action.type !== "finish" && step.action.type !== "wait") {
+      return { ...step.action, target: step.selectorUsed }
+    }
+    return step.action
+  })
 }
 
 function currentStageForError(run: QARun): Stage {
