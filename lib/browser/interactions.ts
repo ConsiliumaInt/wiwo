@@ -34,7 +34,7 @@ export async function performAction(
   }
   const locator = page.locator(`[data-wiwo-id="${match.element.id}"]`).first()
   if (action.type === "click") await locator.click({ timeout: 10_000 })
-  if (action.type === "fill") await locator.fill(syntheticValue(action.value ?? "", match.element))
+  if (action.type === "fill") await locator.fill(syntheticValue(action.value ?? "", match.element), { timeout: 10_000 })
   if (action.type === "select") await locator.selectOption({ label: action.value }).catch(() => locator.selectOption(action.value ?? ""))
   if (action.type === "press") await locator.press(action.key || "Enter")
   await page.waitForTimeout(600)
