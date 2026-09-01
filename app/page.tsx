@@ -1,8 +1,9 @@
 import { NewRunForm } from "@/components/new-run-form"
+import { LoginGate } from "@/components/login-gate"
 
 export default function HomePage() {
   return (
-    <main className="shell homeShell">
+    <LoginGate><main className="shell homeShell">
       <section className="intro">
         <div className="eyebrow"><span>MISSION / 001</span> AUTONOMOUS SOFTWARE QUALITY</div>
         <div className="verdictHero" aria-label="Will it ship?">
@@ -24,6 +25,6 @@ export default function HomePage() {
         <span><i>02</i> Isolated repair sandboxes</span>
         <span><i>03</i> Observable verification only</span>
       </section>
-    </main>
+    </main></LoginGate>
   )
 }

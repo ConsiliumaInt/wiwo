@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" fill="#0d0c0b"/>
+  <rect x="9" y="9" width="46" height="46" fill="none" stroke="#ff5a1f" stroke-width="3" transform="rotate(-3 32 32)"/>
+  <path d="M9 32h46" stroke="#ff5a1f" stroke-width="3"/>
+  <text x="32" y="27" text-anchor="middle" fill="#fffaf2" font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="900">WI</text>
+  <text x="32" y="47" text-anchor="middle" fill="#ff5a1f" font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="900">WO</text>
+</svg>
