@@ -114,7 +114,7 @@ function FindingCard({ finding, index }: { finding: Finding; index: number }) {
       {finding.patch && <details open><summary>Candidate patch</summary><pre>{finding.patch}</pre></details>}
       {finding.validation?.length ? <section className="validation"><h4>Validation</h4>{finding.validation.map((result) => <div className="validationRow" key={result.command}><span className={result.passed ? "pass" : "fail"}>{result.passed ? "PASS" : "FAIL"}</span><code>{result.command}</code><span>{(result.durationMs / 1000).toFixed(1)}s</span></div>)}</section> : null}
       {finding.verification && <div className={`verification ${finding.verification.expectedOutcomeObserved ? "verified" : "unverified"}`}><b>{finding.verification.expectedOutcomeObserved ? "BEFORE: FAIL → AFTER: PASS" : "FIX NOT VERIFIED"}</b><p>{finding.verification.summary}</p></div>}
-      {screenshots.length ? <div className="screenshots">{screenshots.map((shot) => <figure key={shot.id}><Image src={shot.value} alt={shot.label} width={1200} height={760} unoptimized /><figcaption>{shot.label}</figcaption></figure>)}</div> : null}
+      {screenshots.length ? <div className="screenshots">{screenshots.map((shot) => <figure key={shot.id}><Image src={evidenceSrc(shot.value)} alt={shot.label} width={1200} height={760} unoptimized /><figcaption>{shot.label}</figcaption></figure>)}</div> : null}
       {otherEvidence.length ? <details><summary>Evidence log ({otherEvidence.length})</summary><div className="evidenceLog">{otherEvidence.map((item) => <EvidenceRow key={item.id} evidence={item} />)}</div></details> : null}
     </article>
   )
@@ -142,4 +142,9 @@ function repoName(value: string): string { return value.replace(/\.git$/, "").sp
 function formatDuration(start: string, end?: string): string {
   const seconds = Math.max(0, Math.floor(((end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime()) / 1000))
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
+function evidenceSrc(value: string): string {
+  if (!value.startsWith("/api/")) return value
+  return `${process.env.NEXT_PUBLIC_BASE_PATH || ""}${value}`
 }
