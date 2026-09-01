@@ -7,6 +7,7 @@ import { STAGES, type Evidence, type Finding, type QARun } from "@/lib/types"
 
 export function RunView({ initialRun }: { initialRun: QARun }) {
   const [run, setRun] = useState(initialRun)
+  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
     let active = true
@@ -30,6 +31,11 @@ export function RunView({ initialRun }: { initialRun: QARun }) {
     source.addEventListener("snapshot", (event) => { if (active) setRun(JSON.parse((event as MessageEvent<string>).data) as QARun) })
     return () => { active = false; window.clearInterval(poll); if (hardRefresh) window.clearInterval(hardRefresh); source.close() }
   }, [run.id])
+
+  useEffect(() => {
+    const clock = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(clock)
+  }, [])
 
   const duration = useMemo(() => formatDuration(run.startedAt ?? run.createdAt, run.completedAt), [run.startedAt, run.createdAt, run.completedAt])
   const fixed = run.findings.filter((finding) => finding.status === "VERIFIED_FIXED").length
@@ -57,6 +63,7 @@ export function RunView({ initialRun }: { initialRun: QARun }) {
       <div className="runGrid">
         <section className="panel timelinePanel">
           <div className="panelTitle"><span>Execution timeline</span><span>{run.currentStage.replace("_", " / ")}</span></div>
+          <RunActivity run={run} now={now} />
           <div className="stageRail">
             {STAGES.map((stage) => {
               const currentIndex = STAGES.indexOf(run.currentStage)
@@ -91,10 +98,20 @@ export function RunView({ initialRun }: { initialRun: QARun }) {
       <section className="findingsSection">
         <div className="sectionHeading"><div><span className="eyebrow">ENGINEERING REPORT</span><h2>{run.findings.length ? "Findings" : run.status === "COMPLETED" ? "No actionable defect observed" : "Findings pending"}</h2></div><span>{run.findings.length} TOTAL</span></div>
         {run.findings.map((finding, index) => <FindingCard key={finding.id} finding={finding} index={index + 1} />)}
-        {!run.findings.length && <div className="emptyReport">{run.status === "RUNNING" || run.status === "QUEUED" ? "WIWO will publish only evidence-backed findings." : "The tested workflow produced no failure signal. This does not claim coverage beyond the executed objective."}</div>}
+        {!run.findings.length && <div className="emptyReport">{run.status === "RUNNING" || run.status === "QUEUED" ? "WIWO will publish only evidence-backed findings." : run.status === "FAILED" ? `Run stopped before a finding could be produced${run.error ? `: ${run.error}` : "."}` : "The tested workflow produced no failure signal. This does not claim coverage beyond the executed objective."}</div>}
       </section>
     </main>
   )
+}
+
+function RunActivity({ run, now }: { run: QARun; now: number }) {
+  const last = run.events.at(-1)
+  const seconds = last ? Math.max(0, Math.floor((now - new Date(last.timestamp).getTime()) / 1_000)) : 0
+  if (run.status === "RUNNING" || run.status === "QUEUED") {
+    return <div className="runActivity active"><span className="activityPulse" /><b>LIVE — {last?.message ?? "Starting run"}</b><span>{seconds}s since last update · checking every 2s</span></div>
+  }
+  if (run.status === "FAILED") return <div className="runActivity failed"><b>RUN FAILED</b><span>{run.error ?? "The run stopped unexpectedly"}</span></div>
+  return <div className="runActivity complete"><b>RUN COMPLETE</b><span>{run.completedAt ? new Date(run.completedAt).toLocaleTimeString() : "Report ready"}</span></div>
 }
 
 function FindingCard({ finding, index }: { finding: Finding; index: number }) {
