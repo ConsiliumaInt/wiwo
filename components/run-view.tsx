@@ -9,11 +9,22 @@ export function RunView({ initialRun }: { initialRun: QARun }) {
   const [run, setRun] = useState(initialRun)
 
   useEffect(() => {
-    if (run.status === "COMPLETED" || run.status === "FAILED") return
+    let active = true
+    const endpoint = `${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/runs/${run.id}`
+    const refresh = async () => {
+      try {
+        const response = await fetch(endpoint, { cache: "no-store" })
+        if (active && response.ok) setRun(await response.json() as QARun)
+      } catch {
+        // The event stream remains the primary live update channel.
+      }
+    }
+    void refresh()
+    const poll = window.setInterval(() => void refresh(), 2_000)
     const source = new EventSource(`${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/runs/${run.id}/events`)
-    source.addEventListener("snapshot", (event) => setRun(JSON.parse((event as MessageEvent<string>).data) as QARun))
-    return () => source.close()
-  }, [run.id, run.status])
+    source.addEventListener("snapshot", (event) => { if (active) setRun(JSON.parse((event as MessageEvent<string>).data) as QARun) })
+    return () => { active = false; window.clearInterval(poll); source.close() }
+  }, [run.id])
 
   const duration = useMemo(() => formatDuration(run.startedAt ?? run.createdAt, run.completedAt), [run.startedAt, run.createdAt, run.completedAt])
   const fixed = run.findings.filter((finding) => finding.status === "VERIFIED_FIXED").length
