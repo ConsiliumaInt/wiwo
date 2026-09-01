@@ -96,7 +96,7 @@ export function RunView({ initialRun }: { initialRun: QARun }) {
       </div>
 
       <section className="findingsSection">
-        <div className="sectionHeading"><div><span className="eyebrow">ENGINEERING REPORT</span><h2>{run.findings.length ? "Findings" : run.status === "COMPLETED" ? "No actionable defect observed" : "Findings pending"}</h2></div><span>{run.findings.length} TOTAL</span></div>
+        <div className="sectionHeading"><div><span className="eyebrow">ENGINEERING REPORT</span><h2>{run.findings.length ? "Findings" : run.status === "FAILED" ? "Run failed" : run.status === "COMPLETED" ? "No actionable defect observed" : "Findings pending"}</h2></div><span>{run.findings.length} TOTAL</span></div>
         {run.findings.map((finding, index) => <FindingCard key={finding.id} finding={finding} index={index + 1} />)}
         {!run.findings.length && <div className="emptyReport">{run.status === "RUNNING" || run.status === "QUEUED" ? "WIWO will publish only evidence-backed findings." : run.status === "FAILED" ? `Run stopped before a finding could be produced${run.error ? `: ${run.error}` : "."}` : "The tested workflow produced no failure signal. This does not claim coverage beyond the executed objective."}</div>}
       </section>
