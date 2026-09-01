@@ -13,6 +13,13 @@ export interface FailureSignal {
   message: string
   url: string
   severity: "critical" | "high" | "medium" | "low"
+  request?: {
+    url: string
+    method: string
+    body?: string
+    contentType?: string
+    expectedStatus: number
+  }
 }
 
 export interface BrowserRunResult {
@@ -191,10 +198,34 @@ function observeFailures(page: BrowserPage): FailureSignal[] {
   })
   page.on("response", (response) => {
     if (response.status() >= 400 && ["document", "xhr", "fetch"].includes(response.request().resourceType())) {
-      signals.push({ kind: "http", message: `HTTP ${response.status()} ${response.request().method()} ${response.url()}`, url: response.url(), severity: response.status() >= 500 ? "high" : "medium" })
+      const request = response.request()
+      signals.push({
+        kind: "http",
+        message: `HTTP ${response.status()} ${request.method()} ${response.url()}`,
+        url: response.url(),
+        severity: response.status() >= 500 ? "high" : "medium",
+        request: {
+          url: response.url(),
+          method: request.method(),
+          body: request.postData() ?? undefined,
+          contentType: request.headers()["content-type"],
+          expectedStatus: response.status(),
+        },
+      })
     }
   })
   return signals
+}
+
+export async function replayHttpFailure(request: NonNullable<FailureSignal["request"]>): Promise<boolean> {
+  const response = await fetch(request.url, {
+    method: request.method,
+    headers: request.contentType ? { "Content-Type": request.contentType } : undefined,
+    body: ["GET", "HEAD"].includes(request.method.toUpperCase()) ? undefined : request.body,
+    redirect: "manual",
+    signal: AbortSignal.timeout(15_000),
+  })
+  return response.status === request.expectedStatus
 }
 
 function detectVisibleFailure(text: string, url: string, signals: FailureSignal[]): void {

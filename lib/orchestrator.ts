@@ -1,5 +1,5 @@
 import type { BrowserRunResult } from "@/lib/browser/worker"
-import { exploreApplication, replayWorkflow } from "@/lib/browser/worker"
+import { exploreApplication, replayHttpFailure, replayWorkflow } from "@/lib/browser/worker"
 import { createFinding, sameFailure } from "@/lib/detection"
 import { getLLMProvider } from "@/lib/llm/openai"
 import { RepairWorkspace } from "@/lib/sandbox/worker"
@@ -127,13 +127,22 @@ async function executeRun(runId: string): Promise<void> {
 
 async function discover(run: QARun, llm: ReturnType<typeof getLLMProvider>): Promise<BrowserRunResult> {
   await addEvent(run.id, "DISCOVER", "Launching Solari browser")
-  const result = await exploreApplication({
+  const options = {
     runId: run.id,
     applicationUrl: run.input.applicationUrl,
     objective: run.input.objective,
     llm,
-    onProgress: (message, detail) => addEvent(run.id, "EXECUTE", message, "info", detail).then(() => undefined),
-  })
+    onProgress: (message: string, detail?: string) => addEvent(run.id, "EXECUTE", message, "info", detail).then(() => undefined),
+  }
+  let result: BrowserRunResult
+  try {
+    result = await exploreApplication(options)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!/browser closed|target closed|session.*closed/i.test(message)) throw error
+    await addEvent(run.id, "EXECUTE", "Browser session closed; retrying", "warning", "Launching one fresh Solari session")
+    result = await exploreApplication(options)
+  }
   await addEvent(run.id, "EXECUTE", "Objective workflow completed", "success", `${result.steps.length} browser decisions`)
   return result
 }
@@ -153,6 +162,21 @@ async function detect(runId: string, objective: string, exploration: BrowserRunR
 async function reproduce(runId: string, url: string, finding: Finding, exploration: BrowserRunResult): Promise<boolean> {
   await updateFinding(runId, finding.id, (item) => { item.status = "REPRODUCING" })
   await addEvent(runId, "REPRODUCE", "Replaying the exact observed workflow")
+  if (finding.reproductionRequest) {
+    const reproduced = await replayHttpFailure(finding.reproductionRequest)
+    await updateFinding(runId, finding.id, (item) => {
+      item.status = reproduced ? "REPRODUCED" : "UNABLE_TO_REPRODUCE"
+      item.evidence.push({
+        id: crypto.randomUUID(),
+        kind: "network",
+        label: "deterministic HTTP replay",
+        value: `${finding.reproductionRequest?.method} ${finding.reproductionRequest?.url} → HTTP ${finding.reproductionRequest?.expectedStatus}`,
+        timestamp: new Date().toISOString(),
+      })
+    })
+    await addEvent(runId, "REPRODUCE", reproduced ? "Failure reproduced" : "Unable to reproduce failure", reproduced ? "success" : "warning", "Recorded HTTP request replayed independently of the browser session")
+    return reproduced
+  }
   const replay = await replayWorkflow(runId, url, replayActions(exploration.steps), "reproduction", (message, detail) => addEvent(runId, "REPRODUCE", message, "info", detail).then(() => undefined))
   const reproduced = sameFailure(finding, replay)
   await updateFinding(runId, finding.id, (item) => {

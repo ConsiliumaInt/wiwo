@@ -20,6 +20,7 @@ export function createFinding(result: BrowserRunResult, objective: string): Find
     affectedUrl: primary.url || result.finalUrl,
     timestamp: new Date().toISOString(),
     before: primary.message,
+    reproductionRequest: primary.request,
   }
 }
 

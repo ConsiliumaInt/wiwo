@@ -112,6 +112,13 @@ export interface Finding {
   before?: string
   after?: string
   verification?: VerificationResult
+  reproductionRequest?: {
+    url: string
+    method: string
+    body?: string
+    contentType?: string
+    expectedStatus: number
+  }
 }
 
 export interface RepositoryAnalysis {
