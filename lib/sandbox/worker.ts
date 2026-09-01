@@ -134,9 +134,10 @@ export class RepairWorkspace {
   private async applyContractKeyFallback(finding: Finding, rootCause: RootCause): Promise<string | null> {
     const requestKeys = extractJsonKeys(finding.reproductionRequest?.body)
     const diagnosedIdentifiers = `${rootCause.probableCause} ${rootCause.rationale} ${rootCause.patchStrategy}`
-      .match(/`([A-Za-z_$][A-Za-z0-9_$]*)`/g)
-      ?.map((value) => value.slice(1, -1)) ?? []
-    const desiredKeys = diagnosedIdentifiers.filter((key) => !requestKeys.includes(key))
+      .match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? []
+    const desiredKeys = diagnosedIdentifiers.filter((key) =>
+      !requestKeys.includes(key) && requestKeys.some((requestKey) => normaliseIdentifier(requestKey) === normaliseIdentifier(key)),
+    )
     const sandbox = this.requireSandbox()
     for (const file of rootCause.likelyFiles) {
       if (!/^(?:src|app|pages|lib|components)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|js|jsx)$/.test(file)) continue
@@ -360,6 +361,10 @@ function extractJsonKeys(body?: string): string[] {
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function normaliseIdentifier(value: string): string {
+  return value.replace(/_/g, "").toLowerCase()
 }
 
 function detectPackageManager(files: string[]): string {
