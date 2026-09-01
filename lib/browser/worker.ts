@@ -88,6 +88,11 @@ export async function exploreApplication(options: WorkerOptions): Promise<Browse
           if (outcome.recovered) await options.onProgress("Interaction self-healed", outcome.observation)
           const replayableAction = outcome.selector ? { ...action, target: outcome.selector } : action
           steps.push(step(index, replayableAction, page.url(), outcome.recovered ? "recovered" : "passed", outcome.observation, outcome.selector))
+          if (signals.some((signal) => ["http", "exception", "page"].includes(signal.kind))) {
+            finishedReason = "Actionable application failure observed"
+            await options.onProgress("Application failure captured", "Stopping exploration and moving to deterministic reproduction")
+            break
+          }
         } catch (error) {
           const message = safeError(error)
           signals.push({ kind: "interaction", message, url: page.url(), severity: "high" })
