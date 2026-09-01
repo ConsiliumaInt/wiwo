@@ -21,9 +21,14 @@ export function RunView({ initialRun }: { initialRun: QARun }) {
     }
     void refresh()
     const poll = window.setInterval(() => void refresh(), 2_000)
+    // Fallback for proxies/browsers that silently drop SSE and cache fetches:
+    // an active run must never leave viewers staring at its initial snapshot.
+    const hardRefresh = run.status === "RUNNING" || run.status === "QUEUED"
+      ? window.setInterval(() => window.location.reload(), 10_000)
+      : undefined
     const source = new EventSource(`${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/runs/${run.id}/events`)
     source.addEventListener("snapshot", (event) => { if (active) setRun(JSON.parse((event as MessageEvent<string>).data) as QARun) })
-    return () => { active = false; window.clearInterval(poll); source.close() }
+    return () => { active = false; window.clearInterval(poll); if (hardRefresh) window.clearInterval(hardRefresh); source.close() }
   }, [run.id])
 
   const duration = useMemo(() => formatDuration(run.startedAt ?? run.createdAt, run.completedAt), [run.startedAt, run.createdAt, run.completedAt])
