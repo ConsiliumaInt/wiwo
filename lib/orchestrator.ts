@@ -238,12 +238,10 @@ function validationSummary(results: { command: string; passed: boolean }[]): str
 }
 
 function replayActions(steps: BrowserRunResult["steps"]): BrowserAction[] {
-  return steps.map((step) => {
-    if (step.selectorUsed && step.action.type !== "goto" && step.action.type !== "finish" && step.action.type !== "wait") {
-      return { ...step.action, target: step.selectorUsed }
-    }
-    return step.action
-  })
+  // Replay the exact recorded target first. qz element IDs are regenerated
+  // deterministically for a fresh page, while semantic labels may vary or be
+  // absent during hydration; performAction still provides semantic recovery.
+  return steps.map((step) => step.action)
 }
 
 function currentStageForError(run: QARun): Stage {
