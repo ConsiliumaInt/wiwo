@@ -32,7 +32,6 @@ export class RepairWorkspace {
       timeoutMs: 20 * 60_000,
       metadata: { product: "wiwo" },
     })
-    await this.sandbox.connect()
     await this.progress("Sandbox created", `Solari sandbox ${this.sandbox.sandboxId}`)
     const githubToken = process.env.GITHUB_TOKEN
     const repositoryBranch = process.env.WIWO_REPOSITORY_BRANCH || "main"
@@ -45,9 +44,16 @@ export class RepairWorkspace {
     await this.sandbox.git.checkout(`wiwo/fix-${finding.id.slice(0, 8)}`, { cwd: REPOSITORY_PATH, create: true })
     await this.progress("Repository cloned", `${repositoryUrl.replace(/\.git$/, "")} @ ${repositoryBranch}`)
 
+    // Keep the control WebSocket closed for the long dependency install. The
+    // documented one-shot REST exec path is more resilient for run-to-completion
+    // commands; reconnect only when the file/git/snapshot namespaces are needed.
     const files = await this.listFiles()
-    const packageJson = await this.readPackageJson(files)
     const packageManager = detectPackageManager(files)
+    this.sandbox.close()
+    await this.install(packageManager, files)
+    await this.sandbox.connect()
+
+    const packageJson = await this.readPackageJson(files)
     const stack = packageJson ? "Node.js / TypeScript or JavaScript" : "Unsupported for automatic repair"
     const scripts = packageJson?.scripts ?? {}
     const analysis: RepositoryAnalysis = {
@@ -61,7 +67,6 @@ export class RepairWorkspace {
 
     await this.progress("Repository stack detected", `${stack} · ${packageManager}`)
     await this.ensureNodeRuntime()
-    await this.install(packageManager, files)
     const baseline = await this.validateScripts(packageManager, scripts, "Baseline")
     const sourceContext = await this.collectSourceContext(files, finding)
     const snapshotId = await this.sandbox.snapshot("wiwo-clean-failing-state")
