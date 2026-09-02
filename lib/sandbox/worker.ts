@@ -454,8 +454,8 @@ function installCommand(manager: string, files: string[]): { cmd: string; args: 
   if (manager === "yarn") return { cmd: "yarn", args: ["install", "--frozen-lockfile"] }
   if (manager === "bun") return { cmd: "bun", args: ["install", "--frozen-lockfile"] }
   return files.includes("package-lock.json")
-    ? { cmd: "npm", args: ["ci", "--ignore-scripts=false"] }
-    : { cmd: "npm", args: ["install", "--ignore-scripts=false"] }
+    ? { cmd: "npm", args: ["ci", "--ignore-scripts"] }
+    : { cmd: "npm", args: ["install", "--ignore-scripts"] }
 }
 
 function scriptCommand(manager: string, script: string): { cmd: string; args: string[] } {
