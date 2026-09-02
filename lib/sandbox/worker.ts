@@ -35,14 +35,15 @@ export class RepairWorkspace {
     await this.sandbox.connect()
     await this.progress("Sandbox created", `Solari sandbox ${this.sandbox.sandboxId}`)
     const githubToken = process.env.GITHUB_TOKEN
+    const repositoryBranch = process.env.WIWO_REPOSITORY_BRANCH || "main"
     await this.sandbox.git.clone(repositoryUrl, {
       path: REPOSITORY_PATH,
-      branch: "main",
+      branch: repositoryBranch,
       depth: 1,
       ...(githubToken ? { username: "x-access-token", password: githubToken } : {}),
     })
     await this.sandbox.git.checkout(`wiwo/fix-${finding.id.slice(0, 8)}`, { cwd: REPOSITORY_PATH, create: true })
-    await this.progress("Repository cloned", repositoryUrl.replace(/\.git$/, ""))
+    await this.progress("Repository cloned", `${repositoryUrl.replace(/\.git$/, "")} @ ${repositoryBranch}`)
 
     const files = await this.listFiles()
     const packageJson = await this.readPackageJson(files)
@@ -69,7 +70,8 @@ export class RepairWorkspace {
   }
 
   async diagnose(llm: LLMProvider, finding: Finding, prepared: PreparedRepository): Promise<RootCause> {
-    return llm.generate<RootCause>({
+    try {
+      return await llm.generate<RootCause>({
       name: "root_cause",
       system: [
         "You are a senior software engineer diagnosing a reproduced web defect.",
@@ -90,7 +92,15 @@ export class RepairWorkspace {
         required: ["probableCause", "confidence", "likelyFiles", "rationale", "patchStrategy"],
         additionalProperties: false,
       },
-    })
+      })
+    } catch (error) {
+      const fallback = deriveContractDiagnosis(finding, prepared.sourceContext)
+      if (fallback) {
+        await this.progress("Contract mismatch diagnosed from evidence", fallback.probableCause)
+        return fallback
+      }
+      throw error
+    }
   }
 
   async generateAndApplyPatch(llm: LLMProvider, finding: Finding, rootCause: RootCause, sourceContext: string): Promise<string> {
@@ -119,17 +129,26 @@ export class RepairWorkspace {
       if (fallback) return fallback
       throw error
     }
-    const diff = sanitiseDiff(response.diff)
-    if (!diff.startsWith("diff --git ") || diff.length > 100_000) throw new Error("AI provider did not produce a safe unified git diff")
-    validatePatchTargets(diff)
-    const sandbox = this.requireSandbox()
-    await sandbox.files.write("/tmp/wiwo-candidate.patch", diff)
-    const check = await sandbox.commands.run("git", { args: ["apply", "--check", "/tmp/wiwo-candidate.patch"], cwd: REPOSITORY_PATH, timeoutMs: 30_000 })
-    if (check.exitCode !== 0) throw new Error(`Candidate patch did not apply cleanly: ${redactSecrets(check.stderr)}`)
-    const apply = await sandbox.commands.run("git", { args: ["apply", "--whitespace=fix", "/tmp/wiwo-candidate.patch"], cwd: REPOSITORY_PATH, timeoutMs: 30_000 })
-    if (apply.exitCode !== 0) throw new Error(`Candidate patch failed: ${redactSecrets(apply.stderr)}`)
-    await this.progress("Candidate fix applied", `${diff.split("\n").filter((line) => line.startsWith("+++ b/")).length} file(s) changed`)
-    return redactSecrets(diff, 100_000)
+    try {
+      const diff = sanitiseDiff(response.diff)
+      if (!diff.startsWith("diff --git ") || diff.length > 100_000) throw new Error("AI provider did not produce a safe unified git diff")
+      validatePatchTargets(diff)
+      const sandbox = this.requireSandbox()
+      await sandbox.files.write("/tmp/wiwo-candidate.patch", diff)
+      const check = await sandbox.commands.run("git", { args: ["apply", "--check", "/tmp/wiwo-candidate.patch"], cwd: REPOSITORY_PATH, timeoutMs: 30_000 })
+      if (check.exitCode !== 0) throw new Error(`Candidate patch did not apply cleanly: ${redactSecrets(check.stderr)}`)
+      const apply = await sandbox.commands.run("git", { args: ["apply", "--whitespace=fix", "/tmp/wiwo-candidate.patch"], cwd: REPOSITORY_PATH, timeoutMs: 30_000 })
+      if (apply.exitCode !== 0) throw new Error(`Candidate patch failed: ${redactSecrets(apply.stderr)}`)
+      await this.progress("Candidate fix applied", `${diff.split("\n").filter((line) => line.startsWith("+++ b/")).length} file(s) changed`)
+      return redactSecrets(diff, 100_000)
+    } catch (error) {
+      const fallback = await this.applyContractKeyFallback(finding, rootCause)
+      if (fallback) {
+        await this.progress("Model patch rejected; deterministic repair applied", "The candidate diff was unsafe or did not match the supplied source")
+        return fallback
+      }
+      throw error
+    }
   }
 
   private async applyContractKeyFallback(finding: Finding, rootCause: RootCause): Promise<string | null> {
@@ -150,9 +169,9 @@ export class RepairWorkspace {
       }
       for (const oldKey of requestKeys) {
         for (const desiredKey of desiredKeys) {
-          const pattern = new RegExp(`\\b${escapeRegex(oldKey)}\\s*:\\s*${escapeRegex(desiredKey)}\\b`)
+          const pattern = new RegExp(`([,{]\\s*)${escapeRegex(oldKey)}(\\s*:)`)
           if (!pattern.test(content)) continue
-          const updated = content.replace(pattern, desiredKey)
+          const updated = content.replace(pattern, `$1${desiredKey}$2`)
           await sandbox.files.write(`${REPOSITORY_PATH}/${file}`, updated)
           const diffResult = await sandbox.commands.run("git", { args: ["diff", "--", file], cwd: REPOSITORY_PATH, timeoutMs: 15_000 })
           const diff = sanitiseDiff(diffResult.stdout)
@@ -382,6 +401,30 @@ function escapeRegex(value: string): string {
 
 function normaliseIdentifier(value: string): string {
   return value.replace(/_/g, "").toLowerCase()
+}
+
+function deriveContractDiagnosis(finding: Finding, sourceContext: string): RootCause | null {
+  const requestKeys = extractJsonKeys(finding.reproductionRequest?.body)
+  const identifiers = sourceContext.match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? []
+  for (const requestKey of requestKeys) {
+    const desiredKey = identifiers.find((candidate) => candidate !== requestKey && normaliseIdentifier(candidate) === normaliseIdentifier(requestKey))
+    if (!desiredKey) continue
+    const likelyFiles = [...sourceContext.matchAll(/\n--- ([^\n]+) ---\n/g)]
+      .map((match) => match[1])
+      .filter((file) => {
+        const section = sourceContext.split(`\n--- ${file} ---\n`)[1]?.split("\n--- ")[0] ?? ""
+        return section.includes(requestKey) || section.includes(desiredKey)
+      })
+      .slice(0, 5)
+    return {
+      probableCause: `The observed request sends ${requestKey}, while the repository contract expects ${desiredKey}.`,
+      confidence: "high",
+      likelyFiles,
+      rationale: `The deterministic HTTP replay returned ${finding.actualBehaviour}. The captured request body contains ${requestKey}; repository source contains the equivalent identifier ${desiredKey}.`,
+      patchStrategy: `Normalize ${requestKey} to ${desiredKey} at the diagnosed client/server contract boundary and retain existing validation.`,
+    }
+  }
+  return null
 }
 
 function detectPackageManager(files: string[]): string {

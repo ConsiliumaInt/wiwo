@@ -8,7 +8,7 @@ interface ResponsesPayload {
 }
 
 interface ChatCompletionsPayload {
-  choices?: Array<{ message?: { content?: string } }>
+  choices?: Array<{ finish_reason?: string; message?: { content?: string; reasoning_content?: string } }>
   error?: { message?: string }
 }
 
@@ -76,7 +76,9 @@ class DeepSeekProvider implements LLMProvider {
           { role: "user", content: prompt },
         ],
         response_format: { type: "json_object" },
-        max_tokens: 8_000,
+        // Reasoning models can consume most of the completion budget before
+        // emitting the required JSON object. Leave enough room for both.
+        max_tokens: 16_000,
         temperature: 0,
       }),
       signal: AbortSignal.timeout(180_000),
@@ -84,10 +86,20 @@ class DeepSeekProvider implements LLMProvider {
     const payload = await response.json() as ChatCompletionsPayload
     if (!response.ok) throw new Error(`AI provider failed (${response.status}): ${payload.error?.message ?? "unknown error"}`)
     const text = payload.choices?.[0]?.message?.content
-    if (!text) throw new Error("AI provider returned no structured output")
-    const parsed = JSON.parse(text) as T
+    if (!text) {
+      const finishReason = payload.choices?.[0]?.finish_reason
+      throw new Error(finishReason === "length"
+        ? "AI provider exhausted its response budget before returning structured output"
+        : "AI provider returned no structured output")
+    }
+    const parsed = JSON.parse(text) as Record<string, unknown>
     if (JSON.stringify(parsed) === JSON.stringify(schema)) throw new Error("AI provider returned the schema instead of an answer")
-    return parsed
+    // DeepSeek may honour the requested object name by wrapping the payload
+    // (for example, { root_cause: { ... } }) even with json_object mode.
+    // Normalize that shape at the provider boundary so callers receive the
+    // same typed value as the Responses API implementation.
+    const named = parsed[name]
+    return (named && typeof named === "object" && !Array.isArray(named) ? named : parsed) as T
   }
 }
 

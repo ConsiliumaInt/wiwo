@@ -2,12 +2,13 @@
 
 import Image from "next/image"
 import Link from "next/link"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react"
 import { STAGES, type Evidence, type Finding, type QARun } from "@/lib/types"
 
 export function RunView({ initialRun }: { initialRun: QARun }) {
   const [run, setRun] = useState(initialRun)
   const [now, setNow] = useState(() => Date.now())
+  const hydrated = useSyncExternalStore(() => () => undefined, () => true, () => false)
 
   useEffect(() => {
     let active = true
@@ -30,14 +31,14 @@ export function RunView({ initialRun }: { initialRun: QARun }) {
     const source = new EventSource(`${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/runs/${run.id}/events`)
     source.addEventListener("snapshot", (event) => { if (active) setRun(JSON.parse((event as MessageEvent<string>).data) as QARun) })
     return () => { active = false; window.clearInterval(poll); if (hardRefresh) window.clearInterval(hardRefresh); source.close() }
-  }, [run.id])
+  }, [run.id, run.status])
 
   useEffect(() => {
     const clock = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(clock)
   }, [])
 
-  const duration = useMemo(() => formatDuration(run.startedAt ?? run.createdAt, run.completedAt), [run.startedAt, run.createdAt, run.completedAt])
+  const duration = useMemo(() => hydrated ? formatDuration(run.startedAt ?? run.createdAt, run.completedAt) : "0s", [hydrated, run.startedAt, run.createdAt, run.completedAt])
   const fixed = run.findings.filter((finding) => finding.status === "VERIFIED_FIXED").length
   const unverified = run.findings.filter((finding) => finding.status !== "VERIFIED_FIXED").length
 
@@ -63,7 +64,7 @@ export function RunView({ initialRun }: { initialRun: QARun }) {
       <div className="runGrid">
         <section className="panel timelinePanel">
           <div className="panelTitle"><span>Execution timeline</span><span>{run.currentStage.replace("_", " / ")}</span></div>
-          <RunActivity run={run} now={now} />
+          <RunActivity run={run} now={now} hydrated={hydrated} />
           <div className="stageRail">
             {STAGES.map((stage) => {
               const currentIndex = STAGES.indexOf(run.currentStage)
@@ -104,14 +105,14 @@ export function RunView({ initialRun }: { initialRun: QARun }) {
   )
 }
 
-function RunActivity({ run, now }: { run: QARun; now: number }) {
+function RunActivity({ run, now, hydrated }: { run: QARun; now: number; hydrated: boolean }) {
   const last = run.events.at(-1)
-  const seconds = last ? Math.max(0, Math.floor((now - new Date(last.timestamp).getTime()) / 1_000)) : 0
+  const seconds = hydrated && last ? Math.max(0, Math.floor((now - new Date(last.timestamp).getTime()) / 1_000)) : 0
   if (run.status === "RUNNING" || run.status === "QUEUED") {
     return <div className="runActivity active"><span className="activityPulse" /><b>LIVE — {last?.message ?? "Starting run"}</b><span>{seconds}s since last update · checking every 2s</span></div>
   }
   if (run.status === "FAILED") return <div className="runActivity failed"><b>RUN FAILED</b><span>{run.error ?? "The run stopped unexpectedly"}</span></div>
-  return <div className="runActivity complete"><b>RUN COMPLETE</b><span>{run.completedAt ? new Date(run.completedAt).toLocaleTimeString() : "Report ready"}</span></div>
+  return <div className="runActivity complete"><b>RUN COMPLETE</b><span>{hydrated && run.completedAt ? new Date(run.completedAt).toLocaleTimeString() : "Report ready"}</span></div>
 }
 
 function FindingCard({ finding, index }: { finding: Finding; index: number }) {
@@ -130,7 +131,7 @@ function FindingCard({ finding, index }: { finding: Finding; index: number }) {
       </div>
       <div className="findingGrid">
         <section><h4>Reproduction</h4><ol>{finding.reproductionSteps.map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{item}</li>)}</ol></section>
-        <section><h4>Root cause</h4>{finding.rootCause ? <><p>{finding.rootCause.probableCause}</p><small>{finding.rootCause.confidence.toUpperCase()} CONFIDENCE</small><p className="muted">{finding.rootCause.rationale}</p></> : <p className="muted">Not available until a defect is reproduced and source is supplied.</p>}</section>
+        <section><h4>Root cause</h4>{finding.rootCause ? <><p>{finding.rootCause.probableCause || "Root cause details were incomplete."}</p><small>{finding.rootCause.confidence?.toUpperCase() ?? "UNKNOWN"} CONFIDENCE</small><p className="muted">{finding.rootCause.rationale || "No diagnostic rationale was recorded."}</p></> : <p className="muted">Not available until a defect is reproduced and source is supplied.</p>}</section>
       </div>
       {finding.affectedFiles?.length ? <div className="fileList"><span>AFFECTED FILES</span>{finding.affectedFiles.map((file) => <code key={file}>{file}</code>)}</div> : null}
       {finding.patch && <details open><summary>Candidate patch</summary><pre>{finding.patch}</pre></details>}
