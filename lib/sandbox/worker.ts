@@ -44,14 +44,9 @@ export class RepairWorkspace {
     await this.sandbox.git.checkout(`wiwo/fix-${finding.id.slice(0, 8)}`, { cwd: REPOSITORY_PATH, create: true })
     await this.progress("Repository cloned", `${repositoryUrl.replace(/\.git$/, "")} @ ${repositoryBranch}`)
 
-    // Keep the control WebSocket closed for the long dependency install. The
-    // documented one-shot REST exec path is more resilient for run-to-completion
-    // commands; reconnect only when the file/git/snapshot namespaces are needed.
     const files = await this.listFiles()
     const packageManager = detectPackageManager(files)
-    this.sandbox.close()
     await this.install(packageManager, files)
-    await this.sandbox.connect()
 
     const packageJson = await this.readPackageJson(files)
     const stack = packageJson ? "Node.js / TypeScript or JavaScript" : "Unsupported for automatic repair"
@@ -316,13 +311,36 @@ export class RepairWorkspace {
     await this.progress("Installing dependencies", `${packageManager} lockfile selected`)
     const command = installCommand(packageManager, files)
     const started = Date.now()
-    const result = await this.requireSandbox().commands.run(command.cmd, {
+    const result = await this.runLongCommand(command.cmd, {
       args: command.args,
       cwd: REPOSITORY_PATH,
       timeoutMs: 8 * 60_000,
     })
     if (result.exitCode !== 0) throw new Error(`Dependency install failed after ${Date.now() - started}ms: ${redactSecrets(result.stderr || result.stdout)}`)
     await this.progress("Dependencies installed", `${Date.now() - started}ms`)
+  }
+
+  private async runLongCommand(cmd: string, options: { args: string[]; cwd: string; timeoutMs: number }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const process = await this.requireSandbox().commands.start(cmd, options)
+        let stdout = ""
+        let stderr = ""
+        process.onData((chunk) => {
+          if (chunk.stream === "stdout") stdout += chunk.data
+          else stderr += chunk.data
+        })
+        const exitCode = await process.wait()
+        return { exitCode, stdout, stderr }
+      } catch (error) {
+        if (attempt === 0 && /control channel closed|1005/i.test(error instanceof Error ? error.message : String(error))) {
+          await this.requireSandbox().commands.connect()
+          continue
+        }
+        throw error
+      }
+    }
+    throw new Error("Long-running sandbox command did not complete")
   }
 
   private async ensureNodeRuntime(): Promise<void> {
