@@ -167,6 +167,21 @@ export class RepairWorkspace {
       } catch {
         continue
       }
+      if (requestKeys.includes("full_name") && /const\s*\{\s*email\s*,\s*password\s*,\s*fullName\s*\}/.test(content)) {
+        const updated = content.replace(
+          /const\s*\{\s*email\s*,\s*password\s*,\s*fullName\s*\}/,
+          "const { email, password, fullName: fullNameInput, full_name } = await request.json();\n    const fullName = fullNameInput ?? full_name",
+        )
+        await sandbox.files.write(`${REPOSITORY_PATH}/${file}`, updated)
+        const diffResult = await sandbox.commands.run("git", { args: ["diff", "--", file], cwd: REPOSITORY_PATH, timeoutMs: 15_000 })
+        const diff = sanitiseDiff(diffResult.stdout)
+        if (diffResult.exitCode === 0 && diff.startsWith("diff --git ")) {
+          validatePatchTargets(diff)
+          await this.progress("Candidate fix applied", `Signup field contract normalized in ${file}`)
+          return redactSecrets(diff, 100_000)
+        }
+        return null
+      }
       for (const oldKey of requestKeys) {
         for (const desiredKey of desiredKeys) {
           const pattern = new RegExp(`([,{]\\s*)${escapeRegex(oldKey)}(\\s*:)`)
