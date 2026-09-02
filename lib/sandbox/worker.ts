@@ -280,12 +280,11 @@ export class RepairWorkspace {
     throw new Error(`Preview did not become ready: ${redactSecrets(output.join(""))}`)
   }
 
-  async complete(keepPreviewAlive: boolean): Promise<void> {
+  async complete(_keepPreviewAlive: boolean): Promise<void> {
     if (!this.sandbox) return
-    if (keepPreviewAlive) {
-      this.sandbox.close()
-      return
-    }
+    // The preview is needed only while verification is running. Once the run
+    // reaches REPORT, always destroy the sandbox so failed channels and
+    // abandoned previews cannot consume the organization's sandbox quota.
     await this.sandbox.kill()
   }
 
