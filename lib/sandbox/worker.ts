@@ -312,8 +312,12 @@ export class RepairWorkspace {
     await this.progress("Installing dependencies", `${packageManager} lockfile selected`)
     const command = installCommand(packageManager, files)
     const started = Date.now()
-    const result = await this.runLongCommand(command.cmd, {
-      args: command.args,
+    // npm can emit a very large stream while resolving packages. Keep that
+    // output inside the guest so the control channel only carries the command
+    // lifecycle and exit code, not megabytes of package-manager noise.
+    const commandLine = [command.cmd, ...command.args].map(shellQuote).join(" ")
+    const result = await this.runLongCommand("sh", {
+      args: ["-c", `${commandLine} > /tmp/wiwo-install.log 2>&1`],
       cwd: REPOSITORY_PATH,
       timeoutMs: 8 * 60_000,
     })
@@ -436,6 +440,10 @@ function extractJsonKeys(body?: string): string[] {
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 function normaliseIdentifier(value: string): string {
