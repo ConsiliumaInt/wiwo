@@ -32,6 +32,7 @@ export class RepairWorkspace {
       timeoutMs: 20 * 60_000,
       metadata: { product: "wiwo" },
     })
+    await this.sandbox.connect()
     await this.progress("Sandbox created", `Solari sandbox ${this.sandbox.sandboxId}`)
     const githubToken = process.env.GITHUB_TOKEN
     const repositoryBranch = process.env.WIWO_REPOSITORY_BRANCH || "main"
