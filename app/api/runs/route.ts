@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
-import { startRun } from "@/lib/orchestrator"
-import { createRun } from "@/lib/store"
+import { hasActiveRun, startRun } from "@/lib/orchestrator"
+import { createRun, updateRun } from "@/lib/store"
 import type { QARun, RunInput } from "@/lib/types"
 import { validateApplicationUrl, validateRepositoryUrl } from "@/lib/security"
 
@@ -8,6 +8,9 @@ export const runtime = "nodejs"
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
+    if (hasActiveRun()) {
+      return NextResponse.json({ error: "A QA run is already active. Wait for it to finish before starting another." }, { status: 409 })
+    }
     const body = (await request.json()) as Partial<RunInput>
     const objective = body.objective?.trim()
     if (!objective || objective.length < 8 || objective.length > 2_000) {
@@ -29,7 +32,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       findings: [],
     }
     await createRun(run)
-    startRun(run.id)
+    if (!startRun(run.id)) {
+      await updateRun(run.id, (current) => {
+        current.status = "FAILED"
+        current.error = "Another QA run started first; no Solari session was created."
+        current.completedAt = new Date().toISOString()
+      })
+      return NextResponse.json({ error: "A QA run is already active. Wait for it to finish before starting another." }, { status: 409 })
+    }
     return NextResponse.json({ runId: run.id }, { status: 202 })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create run" }, { status: 400 })

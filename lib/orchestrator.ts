@@ -9,10 +9,15 @@ import { redactSecrets } from "@/lib/security"
 
 const activeRuns = new Set<string>()
 
-export function startRun(runId: string): void {
-  if (activeRuns.has(runId)) return
+export function hasActiveRun(): boolean {
+  return activeRuns.size > 0
+}
+
+export function startRun(runId: string): boolean {
+  if (activeRuns.size > 0 || activeRuns.has(runId)) return false
   activeRuns.add(runId)
   void executeRun(runId).finally(() => activeRuns.delete(runId))
+  return true
 }
 
 async function executeRun(runId: string): Promise<void> {
