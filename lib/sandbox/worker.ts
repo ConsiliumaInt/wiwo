@@ -316,13 +316,39 @@ export class RepairWorkspace {
     // output inside the guest so the control channel only carries the command
     // lifecycle and exit code, not megabytes of package-manager noise.
     const commandLine = [command.cmd, ...command.args].map(shellQuote).join(" ")
-    const result = await this.runLongCommand("sh", {
-      args: ["-c", `${commandLine} > /tmp/wiwo-install.log 2>&1`],
-      cwd: REPOSITORY_PATH,
-      timeoutMs: 8 * 60_000,
-    })
+    const result = await this.runInstallCommand(commandLine)
     if (result.exitCode !== 0) throw new Error(`Dependency install failed after ${Date.now() - started}ms: ${redactSecrets(result.stderr || result.stdout)}`)
     await this.progress("Dependencies installed", `${Date.now() - started}ms`)
+  }
+
+  private async runInstallCommand(commandLine: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const exitFile = "/tmp/wiwo-install.exit"
+    await this.requireSandbox().commands.start("sh", {
+      args: ["-c", `( ${commandLine} > /tmp/wiwo-install.log 2>&1; printf '%s' \"$?\" > ${exitFile} )`],
+      cwd: REPOSITORY_PATH,
+    })
+    const deadline = Date.now() + 8 * 60_000
+    while (Date.now() < deadline) {
+      try {
+        const status = await this.requireSandbox().commands.run("sh", {
+          args: ["-c", `cat ${exitFile} 2>/dev/null || printf RUNNING`],
+          timeoutMs: 15_000,
+        })
+        if (status.stdout.trim() !== "RUNNING") {
+          const exitCode = Number(status.stdout.trim())
+          const output = await this.requireSandbox().files.readText("/tmp/wiwo-install.log").catch(() => "")
+          return { exitCode: Number.isFinite(exitCode) ? exitCode : 1, stdout: output, stderr: "" }
+        }
+      } catch (error) {
+        if (/control channel closed|1005/i.test(error instanceof Error ? error.message : String(error))) {
+          await this.requireSandbox().commands.connect()
+          continue
+        }
+        throw error
+      }
+      await delay(2_000)
+    }
+    throw new Error("Dependency install timed out after 8 minutes")
   }
 
   private async runLongCommand(cmd: string, options: { args: string[]; cwd: string; timeoutMs: number }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
